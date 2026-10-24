@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in iMessage MCP does not work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste real messages, phone numbers or contact names. Use made-up examples.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Which tool did you call, with which arguments (with private values removed)?
+      placeholder: |
+        1. Call get_conversation with ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "26.5.1"
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node -v` for the Node that runs the server
+      placeholder: "v24.12.0"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: The version in package.json, or the release tag
+      placeholder: "1.5.1"
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: "Claude Code, Codex, Claude Desktop"
+  - type: input
+    id: flags
+    attributes:
+      label: Release flags in IMESSAGE_MCP_RELEASES
+      placeholder: "auto_sms_fallback"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Error output (with private values removed) or notes.

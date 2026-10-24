@@ -1,82 +1,71 @@
-# Multimodal iMessage MCP
+<h1 align="center">iMessage MCP</h1>
 
-The most complete iMessage MCP server for Claude. Read full conversations, search messages, **view image attachments**, send messages, look up contacts, and react to messages -- all from Claude Desktop or Claude Code.
+<p align="center">
+  An MCP server that lets AI agents read, search and (with your confirmation) send iMessages and texts on your Mac, including photo attachments.
+</p>
 
-## Why This Exists
+<p align="center">
+  <a href="https://github.com/tszaks/imessage-mcp/actions/workflows/ci.yml"><img src="https://github.com/tszaks/imessage-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/tszaks/imessage-mcp/releases/latest"><img src="https://img.shields.io/github/v/release/tszaks/imessage-mcp" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tszaks/imessage-mcp" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/macOS-required-blue" alt="macOS">
+  <img src="https://img.shields.io/badge/Node-18%E2%80%9325-green" alt="Node 18 to 25">
+</p>
 
-Every other iMessage MCP tool queries the `text` column in Apple's `chat.db`. The problem? **On modern macOS (14+), 93% of messages are stored in `attributedBody` instead of `text`.** Those tools silently return empty or incomplete conversations.
+```text
+You:    What did Mom text me today?
+Agent:  (calls get_conversation with contact "Mom", last 24 hours)
+        Mom, 9:14 AM: Are you still coming Sunday?
+        Mom, 9:15 AM: [attachment: IMG_2041.HEIC]
+You:    Show me the photo.
+Agent:  (calls get_attachment, converts HEIC to JPEG, looks at the image)
+        It is a photo of a garden with a new fence.
+```
 
-This server reverse-engineers Apple's `NSAttributedString` binary format to extract the actual message content, giving you access to your *complete* message history.
+This server reads the Messages database on your Mac (`~/Library/Messages/chat.db`) and exposes it to MCP clients such as Claude Code, Codex and Claude Desktop. It is for people who want an agent to help with their texts: catch up on a thread, search for a flight confirmation, review which prospects replied, or draft and send a reply after you approve it.
+
+It exists because other iMessage tools only read the `text` column of `chat.db`. On macOS 14 and later most messages live in the `attributedBody` column instead, so those tools return empty or partial threads. This server decodes `attributedBody` and returns the full message text.
 
 ## Features
 
-| Tool | Description |
-|------|-------------|
-| `read_recent_messages` | Read your latest messages across all conversations |
-| `search_messages` | Full-text search across all messages, contacts, and group names |
-| `get_conversation` | Get a complete conversation thread with any contact (by name or number) |
-| `list_chats_structured` | Get chat IDs, handles, last sender, previews, and group status as JSON |
-| `get_conversation_by_chat_id` | Get a reliable structured thread by chat ID |
-| `read_receipts` release flag | Adds best-effort read receipt metadata for outgoing 1:1 iMessage/RCS messages |
-| `find_outreach_followups` | Find SMS outreach threads that need follow-up review |
-| `get_attachment` | **View images and files** from messages -- Claude can see and analyze photos |
-| `send_message` | Send iMessages or SMS/RCS with confirmation safety and optional verified fallback |
-| `detect_message_service` | Inspect a thread and recommend iMessage, SMS/RCS, or auto before sending |
-| `send_message_batch` | Preview and send reviewed batches with an approval token |
-| `list_delivery_failures` | List red-bubble send failures, pending sends, and SMS/RCS recoveries |
-| `delete_messages` | Delete exact local message rows with backup-first DB cleanup |
-| `delete_threads` | Preview and delete full local threads with one exact-batch approval token |
-| `edit_message` | Experimentally edit a recent outgoing iMessage through Messages UI automation |
-| `undo_send_message` | Experimentally undo send for a recent outgoing iMessage through Messages UI automation |
-| `list_recent_chats` | See your most active conversations |
-| `lookup_contact` | Find phone numbers and emails from your Contacts |
-| `react_to_message` | Add tapback reactions to messages |
+- **Complete message text.** Decodes Apple's `NSAttributedString` blob so modern messages are not dropped. See [How it works](#how-it-works).
+- **Photos the agent can see.** `get_attachment` returns images as image content. HEIC photos are converted to JPEG with macOS `sips`.
+- **Name lookup.** Contact names resolve through the local AddressBook databases. The Contacts app does not need to be running.
+- **Send behind a confirmation.** `send_message`, `send_message_batch` and `react_to_message` do nothing unless `confirm` is `true`. Batches also need an approval token from a preview call.
+- **iMessage and SMS/RCS.** Choose a service, or let `auto` pick one. An opt-in flag retries by SMS/RCS when a blue bubble fails.
+- **Outreach helpers.** Structured chat lists, follow-up detection and delivery-failure reports.
+- **Dangerous tools stay off by default.** Deleting and UI-driven editing are behind [release flags](#release-flags).
 
-### Multimodal: Claude Can See Your Photos
+## Install
 
-When you use `get_attachment`, images are returned as base64 content blocks that Claude can actually *look at*. HEIC photos (iPhone default) are automatically converted to JPEG. This means Claude can:
+Requirements:
 
-- Describe what's in a photo someone sent you
-- Read text/screenshots from images
-- Analyze visual content in your conversations
+- A Mac with the Messages app signed in.
+- Node.js 18 or newer and older than 26 (`engines` in `package.json`). Node 24 LTS is recommended: the locked native SQLite dependency (`better-sqlite3`) does not build on Node 26.
+- A terminal or app with the [macOS permissions](#permissions-and-privacy) below.
 
-## Requirements
-
-- **macOS** (this reads the local iMessage database)
-- **Node.js** >= 18 and < 26. Node 24 LTS is recommended because the locked
-  native SQLite dependency is not compatible with Node 26.
-- **Full Disk Access** granted to your terminal app (System Settings > Privacy & Security > Full Disk Access). This covers both the iMessage database and the AddressBook database used for contact name resolution — no need to have the Contacts app running.
-
-## Installation
+The package is not on npm. Install from source:
 
 ```bash
 git clone https://github.com/tszaks/imessage-mcp.git
 cd imessage-mcp
 npm install
+node index.js   # prints "iMessage MCP server v... running on stdio", then waits for an MCP client
 ```
 
-## Configuration
+Press Ctrl-C to stop it. Normally your MCP client starts it for you.
 
-### Claude Desktop
+## Client configuration
 
-Add to your `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "imessage": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["/path/to/imessage-mcp/index.js"]
-    }
-  }
-}
-```
-
-> **Important:** Use the full path to your Node.js binary (e.g., `/opt/homebrew/bin/node`), not just `node`. macOS desktop apps don't inherit your shell's PATH, and using a bare `node` command often resolves to an older system Node that causes native module crashes.
+Replace `/path/to/imessage-mcp` with the folder you cloned, and use the full path to a supported Node (find it with `which node`; Homebrew on Apple silicon is usually `/opt/homebrew/bin/node`). Desktop apps do not inherit your shell PATH, and a bare `node` can pick an older system Node that crashes the native module.
 
 ### Claude Code
 
-Add to your `.mcp.json`:
+```bash
+claude mcp add imessage -- /opt/homebrew/bin/node /path/to/imessage-mcp/index.js
+```
+
+Or add this to a project `.mcp.json`:
 
 ```json
 {
@@ -89,27 +78,73 @@ Add to your `.mcp.json`:
 }
 ```
 
-> In Claude Code, `node` typically resolves correctly since it inherits your shell environment.
+### Codex
 
-## Usage Examples
+Add to `~/.codex/config.toml`:
 
-**"Show me my recent messages"** -- reads your latest conversations
+```toml
+[mcp_servers.imessage]
+command = "/opt/homebrew/bin/node"
+args = ["/path/to/imessage-mcp/index.js"]
+```
 
-**"What did Mom text me today?"** -- resolves "Mom" to a phone number via your AddressBook, pulls the conversation
+### Claude Desktop
 
-**"Search my messages for 'flight confirmation'"** -- full-text search across all messages
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
-**"Find outreach prospects from the last 7 days who replied and need follow-up"** -- returns structured outreach candidates with risk labels
+```json
+{
+  "mcpServers": {
+    "imessage": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/path/to/imessage-mcp/index.js"]
+    }
+  }
+}
+```
 
-**"Preview this batch of 10 follow-up texts"** -- returns exact recipients, messages, warnings, and an approval token before anything sends
+Restart the client after editing. Grant permissions to the app that launches the server (the client or its terminal), not to Node itself.
 
-**"Show recent delivery failures"** -- reports outgoing messages that Messages marked failed or pending, including whether a later SMS/RCS send recovered the thread
+## Tools
 
-**"Show me the photo from message 538516"** -- returns the actual image for Claude to view and describe
+The server registers these tools (from `index.js`). Tools marked with a flag appear only when that [release flag](#release-flags) is set in `IMESSAGE_MCP_RELEASES`.
 
-**"Send 'Running 10 min late' to +1234567890"** -- sends an iMessage (requires confirmation)
+| Tool | What it does |
+|------|--------------|
+| `read_recent_messages` | Read the latest messages across all conversations |
+| `search_messages` | Search by contact name, phone number or message text |
+| `get_conversation` | Get a thread with a contact or number, optionally limited to the last N hours |
+| `list_chats_structured` | List recent chats as JSON: chat ID, handles, last sender, preview, group status, counts |
+| `get_conversation_by_chat_id` | Get a thread as structured JSON by chat ID |
+| `find_outreach_followups` | Find SMS outreach threads that need review or follow-up, with risk labels |
+| `get_attachment` | Return the image or file attached to a message (images are viewable, HEIC converted) |
+| `send_message` | Send an iMessage or SMS/RCS. Requires `confirm: true` |
+| `detect_message_service` | Recommend iMessage, SMS/RCS or auto for a recipient from local history (best effort) |
+| `send_message_batch` | Preview a batch, then send it with `confirm: true` and the approval token |
+| `list_delivery_failures` | List failed or pending outgoing messages and SMS/RCS recoveries |
+| `list_recent_chats` | List recent conversations by activity |
+| `lookup_contact` | Find a phone number or email by contact name |
+| `react_to_message` | Send a tapback (love, like, dislike, laugh, emphasize, question). Requires `confirm: true` |
+| `delete_messages` | Delete exact message rows from the local database, with a backup first. Flag: `message_mutation_tools` |
+| `delete_threads` | Preview and delete whole local threads with an approval token. Flag: `message_mutation_tools` |
+| `edit_message` | Experimental: edit a recent outgoing iMessage through the Messages UI. Flag: `experimental_message_ui_actions` |
+| `undo_send_message` | Experimental: undo send through the Messages UI. Flag: `experimental_message_ui_actions` |
 
-## Release Flags
+The `read_receipts` flag adds read-receipt fields to existing results instead of adding a tool.
+
+## Usage
+
+Example prompts:
+
+- "Show me my recent messages."
+- "Search my messages for 'flight confirmation'."
+- "Find outreach prospects from the last 7 days who replied and need follow-up."
+- "Preview this batch of 10 follow-up texts." (returns exact recipients, messages, warnings and an approval token before anything sends)
+- "Show recent delivery failures."
+- "Show me the photo from message 538516."
+- "Send 'Running 10 min late' to +1234567890." (the agent must show you the message first, then pass `confirm: true`)
+
+## Release flags
 
 Release flags are opt-in through the MCP server environment:
 
@@ -135,7 +170,7 @@ Release flags are opt-in through the MCP server environment:
 | `experimental_message_ui_actions` | Exposes `edit_message` and `undo_send_message`. These tools use Messages UI automation, validate that the target is a recent outgoing iMessage, and verify against `chat.db` after the action. They fail clearly when Messages does not expose the menu action or the message is outside Apple's allowed window. |
 | `read_receipts` | Adds read receipt fields to structured conversation results and read status hints to `get_conversation` text output. Supports outgoing 1:1 iMessage and RCS rows when macOS has synced `date_read`. SMS, group chats, and inbound messages are reported as unsupported. Missing `date_read` means not read or unavailable, which can also mean receipts are disabled or not synced. |
 
-### Mutation Tools
+### Mutation tools
 
 `delete_messages` accepts exact message ROWIDs:
 
@@ -169,14 +204,45 @@ IMESSAGE_MCP_SEND_VERIFY_DELAY_MS=2500
 
 This controls how long the MCP waits before checking the local Messages database for the new outgoing row.
 
-## How It Works
+## Permissions and privacy
+
+This server can read your whole message history and contacts, and send messages as you. Run it only with agents and clients you trust.
+
+**What it reads (locally)**
+
+- `~/Library/Messages/chat.db`: all messages, handles, chats and attachment metadata. The database is opened read-only except for the two [mutation tools](#mutation-tools).
+- `~/Library/Messages/Attachments/`: files you ask for with `get_attachment`.
+- `~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`: contact names, numbers and emails, read-only, cached in memory.
+
+**What it can change**
+
+- Send messages and tapbacks through AppleScript, only with `confirm: true`.
+- With `message_mutation_tools`: delete rows in `chat.db`. A timestamped backup of `chat.db`, `chat.db-wal` and `chat.db-shm` goes to `~/Library/Messages/mcp-backups/` first.
+- With `experimental_message_ui_actions` or `cleanup_failed_imessage_after_sms_fallback`: it opens Messages and clicks through its menus.
+- HEIC conversion writes a temporary JPEG to `/tmp`.
+
+**What it sends**
+
+The server makes no network requests of its own and has no analytics. Message text and images you ask for are returned to your MCP client, and from there to whatever model that client uses. Check your client's and model provider's privacy terms. Messages you send go out through the Messages app like any other message.
+
+**macOS permissions you must grant**
+
+| Permission | Where | Needed for |
+|------------|-------|------------|
+| Full Disk Access | System Settings > Privacy & Security > Full Disk Access | Reading `chat.db` and the AddressBook databases. Grant it to the terminal or app that launches the server. |
+| Automation | Prompted on first use (System Settings > Privacy & Security > Automation) | `osascript` control of Messages for `send_message`, `send_message_batch` and `react_to_message`. Also System Events for the UI tools. |
+| Accessibility | System Settings > Privacy & Security > Accessibility | Only for `edit_message`, `undo_send_message` and failed-bubble cleanup, which drive the Messages window through System Events. |
+
+Reading needs only Full Disk Access. Sending needs Automation as well.
+
+## How it works
 
 ### The attributedBody Fix
 
 Apple's iMessage database (`~/Library/Messages/chat.db`) has two columns for message content:
 
-- `text` -- the legacy plain text column (used by older macOS versions)
-- `attributedBody` -- a serialized `NSAttributedString` blob (used by macOS 14+)
+- `text`: the legacy plain text column (used by older macOS versions)
+- `attributedBody`: a serialized `NSAttributedString` blob (used by macOS 14+)
 
 On modern macOS, Apple gradually migrated message storage to `attributedBody` to support rich text, mentions, and formatting. The `text` column is increasingly just a legacy fallback that's often `NULL`.
 
@@ -197,56 +263,32 @@ iMessage attachments are stored in `~/Library/Messages/Attachments/` with paths 
 4. For HEIC (iPhone default): converts to JPEG using macOS `sips` before returning
 5. For other files: returns metadata and the file path
 
+## FAQ
+
+**Can an agent send a message without asking me?**
+Not through the confirmation tools. `send_message`, `send_message_batch` and `react_to_message` refuse unless `confirm` is `true`, and batches also need the approval token from a preview. The agent still decides when to call them, so keep tool approval on in your client. `delete_messages` needs no confirmation when its flag is enabled.
+
+**Does my data leave my Mac?**
+The server itself sends nothing anywhere. Anything a tool returns goes to your MCP client and its model provider.
+
 ## Troubleshooting
 
 **"Failed to open iMessage database"**
-Grant Full Disk Access to your terminal app: System Settings > Privacy & Security > Full Disk Access.
+Grant Full Disk Access to the terminal or app that launches the server: System Settings > Privacy & Security > Full Disk Access.
 
 **Contact lookup returns no results**
 Contact resolution reads the macOS AddressBook SQLite databases directly (no Contacts app needed). Make sure Full Disk Access is granted. If a contact was just added, restart the MCP server to refresh the cache.
 
 **Native module crash / "NODE_MODULE_VERSION mismatch"**
-Rebuild native dependencies: `npm rebuild`. This happens when your Node.js version changes. Also make sure your Claude Desktop config uses the full path to node (see Configuration above).
+Rebuild native dependencies: `npm rebuild`. This happens when your Node.js version changes. Also make sure your Claude Desktop config uses the full path to node (see [Client configuration](#client-configuration)).
 
 **Missing messages from a conversation**
 This is exactly the bug this server fixes. Make sure you're running the latest version which includes the `attributedBody` extraction.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports go through [SECURITY.md](SECURITY.md). This project follows the [Code of Conduct](CODE_OF_CONDUCT.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md), and coding agents should read [AGENTS.md](AGENTS.md).
+
 ## License
 
-MIT
-
-## Quickstart TL;DR
-
-```bash
-npm install
-node index.js
-```
-
-Then add the server to your MCP client config and grant Full Disk Access to your terminal app.
-
-## How It Works (TL;DR)
-
-- Reads macOS iMessage SQLite database
-- Decodes modern `attributedBody` payloads for complete message text
-- Exposes conversation/search/attachment tools via MCP
-- Uses AppleScript for message send/reaction actions with explicit confirmations
-
-## LLM Quick Copy
-
-Use the copy button on this code block in GitHub.
-
-```txt
-Repo: imessage-mcp
-Goal: Full iMessage MCP including attachments and send/reaction actions.
-Setup:
-1) npm install
-2) Grant Full Disk Access to terminal app
-3) Add MCP config entry for index.js
-Use:
-- read_recent_messages, search_messages, get_conversation
-- list_chats_structured, get_conversation_by_chat_id, find_outreach_followups
-- get_attachment for image/file analysis
-- send_message/send_message_batch/react_to_message with explicit confirm flag
-How it works:
-- SQLite + attributedBody decoding + AppleScript actions wrapped as MCP tools
-```
+[MIT](LICENSE)
